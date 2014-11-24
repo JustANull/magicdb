@@ -1,0 +1,5 @@
+[package]
+
+name = "magicdb"
+version = "0.0.1"
+authors = ["Lyn Levenick <lyn.levenick@gmail.com>"]
