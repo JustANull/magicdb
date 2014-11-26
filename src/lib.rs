@@ -417,9 +417,9 @@ fn load_test() {
     let ashiok = ashiok.unwrap().clone();
     let forest = forest.unwrap().clone();
     assert_eq!(air_elemental.name.as_slice(), "Air Elemental");
-    assert_eq!(air_elemental.mana.clone().unwrap(), vec![Mana::Colorless(3), Mana::Colored(Color::Blue), Mana::Colored(Color::Blue)]);
+    assert_eq!(air_elemental.mana.unwrap(), vec![Mana::Colorless(3), Mana::Colored(Color::Blue), Mana::Colored(Color::Blue)]);
     assert!(match air_elemental.extra {
-        ExtraInfo::PowerToughness(ref p, ref t) => {
+        ExtraInfo::PowerToughness(p, t) => {
             assert!(p.as_slice() == "4");
             assert!(t.as_slice() == "4");
             true
@@ -427,12 +427,19 @@ fn load_test() {
         _ => false
     });
     assert!(match ashiok.extra {
-        ExtraInfo::StartingLoyalty(ref val) => {
-            assert_eq!(*val, 3);
+        ExtraInfo::StartingLoyalty(val) => {
+            assert_eq!(val, 3);
             true
         },
         _ => false
     });
     assert_eq!(budoka.name.as_slice(), "Budoka Pupil");
+    assert!(match budoka.layout {
+        CardLayout::TwoSided(oth) => {
+            assert_eq!(oth.as_slice(), "Ichiga, Who Topples Oaks");
+            true
+        },
+        _ => false
+    });
     assert!(!forest.mana.is_some());
 }
