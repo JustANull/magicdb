@@ -325,38 +325,22 @@ macro_rules! dec_try(
 )
 
 fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, BuilderError> {
-    let name  = dec_try!(card_name, read_string(card_obj, "name"));
-    let mana  = dec_try!(card_name, read_mana(card_obj));
-    let color = dec_try!(card_name, read_color(card_obj));
-
-    let layout = dec_try!(card_name, read_layout(card_obj, card_name));
-
-    let supertypes = dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes"));
-    let types      = dec_try!(card_name, read_optional!(read_string_array, card_obj, "types"));
-    let subtypes   = dec_try!(card_name, read_optional!(read_string_array, card_obj, "subtypes"));
-
-    let image_name  = dec_try!(card_name, read_string(card_obj, "imageName"));
-    let text        = dec_try!(card_name, read_optional!(read_string, card_obj, "text"));
-    let flavor_text = dec_try!(card_name, read_optional!(read_string, card_obj, "flavorText"));
-
-    let extra = dec_try!(card_name, read_extra(card_obj));
-
     Ok(Card {
-        name:  name,
-        mana:  mana,
-        color: color,
+        name:  dec_try!(card_name, read_string(card_obj, "name")),
+        mana:  dec_try!(card_name, read_mana(card_obj)),
+        color: dec_try!(card_name, read_color(card_obj)),
 
-        layout: layout,
+        layout: dec_try!(card_name, read_layout(card_obj, card_name)),
 
-        supertypes: supertypes,
-        types:      types,
-        subtypes:   subtypes,
+        supertypes: dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes")),
+        types:      dec_try!(card_name, read_optional!(read_string_array, card_obj, "types")),
+        subtypes:   dec_try!(card_name, read_optional!(read_string_array, card_obj, "subtypes")),
 
-        image_name:  image_name,
-        text:        text,
-        flavor_text: flavor_text,
+        image_name:  dec_try!(card_name, read_string(card_obj, "imageName")),
+        text:        dec_try!(card_name, read_optional!(read_string, card_obj, "text")),
+        flavor_text: dec_try!(card_name, read_optional!(read_string, card_obj, "flavorText")),
 
-        extra: extra
+        extra: dec_try!(card_name, read_extra(card_obj))
     })
 }
 
