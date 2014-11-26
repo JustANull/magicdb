@@ -6,6 +6,7 @@
 extern crate serialize;
 
 use serialize::json;
+use std::ascii::AsciiExt;
 use std::collections;
 use std::io;
 
@@ -13,7 +14,7 @@ use std::io;
 pub struct Card {
     name:  String,
     mana:  Option<Vec<Mana>>,
-    color: Option<Vec<String>>,
+    color: Option<Vec<Color>>,
 
     layout:     CardLayout,
     other_side: Option<String>,
@@ -130,17 +131,32 @@ fn read_string_array(js: &json::JsonObject, field: &'static str) -> Result<Vec<S
     }
 }
 
-fn read_color(c: char) -> Result<Color, CardError> {
+fn read_color_ch(c: char) -> Option<Color> {
     match c.to_uppercase() {
-        'W' => Ok(Color::White),
-        'U' => Ok(Color::Blue),
-        'B' => Ok(Color::Black),
-        'R' => Ok(Color::Red),
-        'G' => Ok(Color::Green),
-        _   => Err(CardError::InvalidCardField("manaCost"))
+        'W' => Some(Color::White),
+        'U' => Some(Color::Blue),
+        'B' => Some(Color::Black),
+        'R' => Some(Color::Red),
+        'G' => Some(Color::Green),
+        _   => None,
     }
 }
-fn read_mana(s: String) -> Result<Vec<Mana>, CardError> {
+fn read_color_st(s: &String) -> Option<Color> {
+    if s.eq_ignore_ascii_case("White") {
+        Some(Color::White)
+    } else if s.eq_ignore_ascii_case("Blue") {
+        Some(Color::Blue)
+    } else if s.eq_ignore_ascii_case("Black") {
+        Some(Color::Black)
+    } else if s.eq_ignore_ascii_case("Red") {
+        Some(Color::Red)
+    } else if s.eq_ignore_ascii_case("Green") {
+        Some(Color::Green)
+    } else {
+        None
+    }
+}
+fn read_mana_st(s: String) -> Result<Vec<Mana>, CardError> {
     let mut mana = Vec::new();
     let mut current = None;
     let mut is_half = false;
@@ -174,7 +190,10 @@ fn read_mana(s: String) -> Result<Vec<Mana>, CardError> {
                 _ => return Err(CardError::InvalidCardField("manaCost"))
             },
             'W' | 'U' | 'B' | 'R' | 'G' => {
-                let col = try!(read_color(c));
+                let col = match read_color_ch(c) {
+                    Some(col) => col,
+                    None      => return Err(CardError::InvalidCardField("manaCost"))
+                };
 
                 match current {
                     Some(Some(Mana::Colored(oth))) if is_split => {
@@ -184,7 +203,7 @@ fn read_mana(s: String) -> Result<Vec<Mana>, CardError> {
                     Some(Some(Mana::Colorless(val))) if is_split => {
                         is_split = false;
                         current = Some(Some(Mana::ColorlessHybrid(val, col)));
-                    }
+                    },
                     Some(None) if is_half => {
                         is_half = false;
                         current = Some(Some(Mana::Half(col)));
@@ -215,6 +234,23 @@ fn read_mana(s: String) -> Result<Vec<Mana>, CardError> {
     Ok(mana)
 }
 
+fn read_color(js: &json::JsonObject) -> Result<Option<Vec<Color>>, CardError> {
+    match try!(read_optional!(read_string_array, js, "colors")) {
+        Some(a) => {
+            let mut arr = Vec::new();
+
+            for s in a.iter() {
+                arr.push(match read_color_st(s) {
+                    Some(col) => col,
+                    None      => return Err(CardError::InvalidCardField("colors"))
+                });
+            }
+
+            Ok(Some(arr))
+        },
+        None => Ok(None)
+    }
+}
 fn read_extra(js: &json::JsonObject) -> Result<ExtraInfo, CardError> {
     match try!(read_optional!(read_string, js, "power")) {
         Some(power) => Ok(ExtraInfo::PowerToughness(power, try!(read_string(js, "toughness")))),
@@ -233,6 +269,12 @@ fn read_layout(js: &json::JsonObject) -> Result<CardLayout, CardError> {
         "flip"         => Ok(CardLayout::Flip),
         "double-faced" => Ok(CardLayout::DoubleFaced),
         _              => Err(CardError::InvalidCardField("layout"))
+    }
+}
+fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
+    match try!(read_optional!(read_string, js, "manaCost")) {
+        Some(s) => Ok(Some(try!(read_mana_st(s)))),
+        None    => Ok(None)
     }
 }
 fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String) -> Result<Option<String>, CardError> {
@@ -260,12 +302,9 @@ fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String
 }
 
 fn read_card(card_obj: &json::JsonObject, card_name: &String) -> Result<Card, BuilderError> {
-    let name = dec_try!(card_name, read_string(card_obj, "name"));
-    let mana = match dec_try!(card_name, read_optional!(read_string, card_obj, "manaCost")) {
-        Some(m) => Some(dec_try!(card_name, read_mana(m))),
-        None    => None
-    };
-    let color = dec_try!(card_name, read_optional!(read_string_array, card_obj, "colors"));
+    let name  = dec_try!(card_name, read_string(card_obj, "name"));
+    let mana  = dec_try!(card_name, read_mana(card_obj));
+    let color = dec_try!(card_name, read_color(card_obj));
 
     let layout     = dec_try!(card_name, read_layout(card_obj));
     let other_side = dec_try!(card_name, read_other_side(card_obj, layout, &name));
