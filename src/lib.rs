@@ -69,27 +69,6 @@ pub enum BuilderError {
     Json(json::BuilderError)
 }
 
-macro_rules! dec_try(
-    ($name:expr, $e:expr) => (
-        match $e {
-            Ok(e)  => e,
-            Err(e) => return Err(BuilderError::Named($name.clone(), e))
-        }
-    );
-)
-
-macro_rules! read_optional(
-    ($f:expr, $js:expr, $field:expr) => (
-        match $f($js, $field) {
-            Ok(f)  => Ok(Some(f)),
-            Err(f) => match f {
-                CardError::NoCardField(_) => Ok(None),
-                _                            => Err(f)
-            }
-        }
-    );
-)
-
 fn read_integer(js: &json::JsonObject, field: &'static str) -> Result<i64, CardError> {
     match js.get(&field.to_string()) {
         Some(obj) => match obj.as_i64() {
@@ -156,7 +135,7 @@ fn read_color_st(s: &String) -> Option<Color> {
         None
     }
 }
-fn read_mana_st(s: String) -> Result<Vec<Mana>, CardError> {
+fn read_mana_st(s: &str) -> Result<Vec<Mana>, CardError> {
     let mut mana = Vec::new();
     let mut current = None;
     let mut is_half = false;
@@ -234,6 +213,18 @@ fn read_mana_st(s: String) -> Result<Vec<Mana>, CardError> {
     Ok(mana)
 }
 
+macro_rules! read_optional(
+    ($f:expr, $js:expr, $field:expr) => (
+        match $f($js, $field) {
+            Ok(f)  => Ok(Some(f)),
+            Err(f) => match f {
+                CardError::NoCardField(_) => Ok(None),
+                _                            => Err(f)
+            }
+        }
+    );
+)
+
 fn read_color(js: &json::JsonObject) -> Result<Option<Vec<Color>>, CardError> {
     match try!(read_optional!(read_string_array, js, "colors")) {
         Some(a) => {
@@ -273,11 +264,11 @@ fn read_layout(js: &json::JsonObject) -> Result<CardLayout, CardError> {
 }
 fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
     match try!(read_optional!(read_string, js, "manaCost")) {
-        Some(s) => Ok(Some(try!(read_mana_st(s)))),
+        Some(s) => Ok(Some(try!(read_mana_st(s.as_slice())))),
         None    => Ok(None)
     }
 }
-fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String) -> Result<Option<String>, CardError> {
+fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &str) -> Result<Option<String>, CardError> {
     match layout {
         CardLayout::Normal => Ok(None),
         CardLayout::Split | CardLayout::Flip | CardLayout::DoubleFaced => {
@@ -290,9 +281,9 @@ fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String
             let name_2 = names.pop().unwrap();
             let name_1 = names.pop().unwrap();
 
-            if name_1 == *card_name {
+            if name_1.as_slice() == card_name {
                 Ok(Some(name_2))
-            } else if name_2 == *card_name {
+            } else if name_2.as_slice() == card_name {
                 Ok(Some(name_1))
             } else {
                 Err(CardError::InvalidCardField("names"))
@@ -301,13 +292,22 @@ fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String
     }
 }
 
-fn read_card(card_obj: &json::JsonObject, card_name: &String) -> Result<Card, BuilderError> {
+macro_rules! dec_try(
+    ($name:expr, $e:expr) => (
+        match $e {
+            Ok(e)  => e,
+            Err(e) => return Err(BuilderError::Named($name.to_string(), e))
+        }
+    );
+)
+
+fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, BuilderError> {
     let name  = dec_try!(card_name, read_string(card_obj, "name"));
     let mana  = dec_try!(card_name, read_mana(card_obj));
     let color = dec_try!(card_name, read_color(card_obj));
 
     let layout     = dec_try!(card_name, read_layout(card_obj));
-    let other_side = dec_try!(card_name, read_other_side(card_obj, layout, &name));
+    let other_side = dec_try!(card_name, read_other_side(card_obj, layout, name.as_slice()));
 
     let supertypes = dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes"));
     let types      = dec_try!(card_name, read_optional!(read_string_array, card_obj, "types"));
@@ -351,7 +351,7 @@ pub fn from_json(js: &json::Json) -> Result<collections::HashMap<String, Card>, 
         name_to_card.insert(k.clone(), try!(read_card(match v.as_object() {
             Some(card_obj) => card_obj,
             None           => return Err(BuilderError::InvalidCardObject(k.clone()))
-	    }, k)));
+	    }, k.as_slice())));
     }
 
     Ok(name_to_card)
