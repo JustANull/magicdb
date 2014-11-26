@@ -16,8 +16,8 @@ pub struct Card {
     mana:  Option<Vec<Mana>>,
     color: Option<Vec<Color>>,
 
-    layout:     CardLayout,
-    other_side: Option<String>,
+    layout:           CardLayout,
+    other_side_names: Option<Vec<String>>,
 
     supertypes: Option<Vec<String>>,
     types:      Option<Vec<String>>,
@@ -31,7 +31,9 @@ pub struct Card {
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum CardLayout {
-    Normal, Split, Flip, DoubleFaced
+    SingleSided,
+    ManySided,
+    Special
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum Color {
@@ -48,10 +50,14 @@ pub enum Mana {
     Colored(Color),
     // An amount of colorless
     Colorless(u32),
+    // Any amount of colorless with an identifier for which arbitrary amount was paid, needed for The Ultimate Nightmare of Programming
+    Arbitrary(u32),
     // e.g. payable by red or green (Manamorphose)
     Hybrid(Color, Color),
     // e.g. payable by 2 colorless or white (Spectral Procession)
     ColorlessHybrid(u32, Color),
+    // e.g. payable by 2 life or a color (Gitaxian Probe)
+    PhyrexianHybrid(Color),
     // e.g. half a white (Little Girl)
     Half(Color)
 }
@@ -138,8 +144,10 @@ fn read_color_st(s: &String) -> Option<Color> {
 fn read_mana_st(s: &str) -> Result<Vec<Mana>, CardError> {
     let mut mana = Vec::new();
     let mut current = None;
-    let mut is_half = false;
-    let mut is_split = false;
+
+    // Impromptu state machine... Don't know how to design around this without a real parser.
+    let mut is_half      = false;
+    let mut is_split     = false;
 
     for c in s.chars() {
         match c.to_uppercase() {
@@ -192,6 +200,19 @@ fn read_mana_st(s: &str) -> Result<Vec<Mana>, CardError> {
                     }
                     _ => return Err(CardError::InvalidCardField("manaCost"))
                 }
+            },
+            'P' if is_split => match current {
+                Some(Some(Mana::Colored(col))) => {
+                    is_split = false;
+                    current = Some(Some(Mana::PhyrexianHybrid(col)));
+                },
+                _ => return Err(CardError::InvalidCardField("manaCost"))
+            },
+            'X' | 'Y' | 'Z' if !is_half && !is_split => match current {
+                Some(None) => {
+                    current = Some(Some(Mana::Arbitrary(c.to_uppercase() as u32 - 'X' as u32)));
+                },
+                _ => return Err(CardError::InvalidCardField("manaCost"))
             },
             num if num.is_digit(10) => {
                 let num = num.to_digit(10).unwrap() as u32;
@@ -255,11 +276,10 @@ fn read_extra(js: &json::JsonObject) -> Result<ExtraInfo, CardError> {
 }
 fn read_layout(js: &json::JsonObject) -> Result<CardLayout, CardError> {
     match try!(read_string(js, "layout")).as_slice() {
-        "normal"       => Ok(CardLayout::Normal),
-        "split"        => Ok(CardLayout::Split),
-        "flip"         => Ok(CardLayout::Flip),
-        "double-faced" => Ok(CardLayout::DoubleFaced),
-        _              => Err(CardError::InvalidCardField("layout"))
+        "normal" | "leveler"                                     => Ok(CardLayout::SingleSided),
+        "split" | "flip" | "double-faced"                        => Ok(CardLayout::ManySided),
+        "token" | "plane" | "scheme" | "phenomenon" | "vanguard" => Ok(CardLayout::Special),
+        _                                                        => Err(CardError::InvalidCardField("layout"))
     }
 }
 fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
@@ -268,23 +288,27 @@ fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
         None    => Ok(None)
     }
 }
-fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &str) -> Result<Option<String>, CardError> {
+fn read_other_side_names(js: &json::JsonObject, layout: CardLayout, card_name: &str) -> Result<Option<Vec<String>>, CardError> {
     match layout {
-        CardLayout::Normal => Ok(None),
-        CardLayout::Split | CardLayout::Flip | CardLayout::DoubleFaced => {
-            let mut names = try!(read_string_array(js, "names"));
+        CardLayout::SingleSided | CardLayout::Special => Ok(None),
+        CardLayout::ManySided => {
+            let names = try!(read_string_array(js, "names"));
+            let names_len = names.len();
 
-            if names.len() != 2 {
+            if names_len < 2 {
                 return Err(CardError::InvalidCardField("names"));
             }
 
-            let name_2 = names.pop().unwrap();
-            let name_1 = names.pop().unwrap();
+            let mut names_v = Vec::new();
 
-            if name_1.as_slice() == card_name {
-                Ok(Some(name_2))
-            } else if name_2.as_slice() == card_name {
-                Ok(Some(name_1))
+            for name in names.into_iter() {
+                if name.as_slice() != card_name {
+                    names_v.push(name);
+                }
+            }
+
+            if names_v.len() == names_len - 1 {
+                Ok(Some(names_v))
             } else {
                 Err(CardError::InvalidCardField("names"))
             }
@@ -306,8 +330,8 @@ fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, Build
     let mana  = dec_try!(card_name, read_mana(card_obj));
     let color = dec_try!(card_name, read_color(card_obj));
 
-    let layout     = dec_try!(card_name, read_layout(card_obj));
-    let other_side = dec_try!(card_name, read_other_side(card_obj, layout, name.as_slice()));
+    let layout           = dec_try!(card_name, read_layout(card_obj));
+    let other_side_names = dec_try!(card_name, read_other_side_names(card_obj, layout, name.as_slice()));
 
     let supertypes = dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes"));
     let types      = dec_try!(card_name, read_optional!(read_string_array, card_obj, "types"));
@@ -325,7 +349,7 @@ fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, Build
         color: color,
 
         layout:     layout,
-        other_side: other_side,
+        other_side_names: other_side_names,
 
         supertypes: supertypes,
         types:      types,
@@ -351,7 +375,7 @@ pub fn from_json(js: &json::Json) -> Result<collections::HashMap<String, Card>, 
         name_to_card.insert(k.clone(), try!(read_card(match v.as_object() {
             Some(card_obj) => card_obj,
             None           => return Err(BuilderError::InvalidCardObject(k.clone()))
-	    }, k.as_slice())));
+	}, k.as_slice())));
     }
 
     Ok(name_to_card)
@@ -371,76 +395,16 @@ pub fn from_str(s: &str) -> Result<collections::HashMap<String, Card>, BuilderEr
 
 #[test]
 fn load_test() {
-    let json_str = r#"{
-        "Air Elemental": {
-            "layout": "normal",
-            "name": "Air Elemental",
-            "manaCost": "{3}{U}{U}",
-            "cmc": 5,
-            "colors": ["Blue"],
-            "type": "Creature — Elemental",
-            "types": ["Creature"],
-            "subtypes": ["Elemental"],
-            "text": "Flying",
-            "power": "4",
-            "toughness": "4",
-            "imageName": "air elemental"
-        },
-        "Ashiok, Nightmare Weaver": {
-            "layout": "normal",
-            "name": "Ashiok, Nightmare Weaver",
-            "manaCost": "{1}{U}{B}",
-            "cmc": 3,
-            "colors": ["Blue", "Black"],
-            "type": "Planeswalker — Ashiok",
-            "types": ["Planeswalker"],
-            "subtypes": ["Ashiok"],
-            "text": "+2: Exile the top three cards of target opponent's library.\n−X: Put a creature card with converted mana cost X exiled with Ashiok, Nightmare Weaver onto the battlefield under your control. That creature is a Nightmare in addition to its other types.\n−10: Exile all cards from all opponents' hands and graveyards.",
-            "loyalty": 3,
-            "imageName": "ashiok, nightmare weaver"
-        },
-        "Budoka Pupil": {
-            "layout": "flip",
-            "name": "Budoka Pupil",
-            "names": ["Budoka Pupil", "Ichiga, Who Topples Oaks"],
-            "manaCost": "{1}{G}{G}",
-            "cmc": 3,
-            "colors": ["Green"],
-            "type": "Creature — Human Monk",
-            "types": ["Creature"],
-            "subtypes": ["Human", "Monk"],
-            "text": "Whenever you cast a Spirit or Arcane spell, you may put a ki counter on Budoka Pupil.\nAt the beginning of the end step, if there are two or more ki counters on Budoka Pupil, you may flip it.",
-            "power": "2",
-            "toughness": "2",
-            "imageName": "budoka pupil"
-        },
-        "Forest": {
-            "layout": "normal",
-            "name": "Forest",
-            "type": "Basic Land — Forest",
-            "supertypes": ["Basic"],
-            "types": ["Land"],
-            "subtypes": ["Forest"],
-            "imageName": "forest"
-        },
-        "Ichiga, Who Topples Oaks": {
-            "layout": "flip",
-            "name": "Ichiga, Who Topples Oaks",
-            "names": ["Budoka Pupil", "Ichiga, Who Topples Oaks"],
-            "manaCost": "{1}{G}{G}",
-            "cmc": 3,
-            "colors": ["Green"],
-            "type": "Legendary Creature — Spirit",
-            "supertypes": ["Legendary"],
-            "types": ["Creature"],
-            "subtypes": ["Spirit"],
-            "text": "Trample\nRemove a ki counter from Ichiga, Who Topples Oaks: Target creature gets +2/+2 until end of turn.",
-            "power": "4",
-            "toughness": "3",
-            "imageName": "ichiga, who topples oaks"
+    let db = from_reader(&mut io::BufferedReader::new(match io::File::open(&Path::new("./AllCards.json")) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("{}", e);
+            panic!(e);
         }
-    }"#;
-    let db = from_str(json_str);
+    }));
+    if !db.is_ok() {
+        println!("{}", db);
+    }
     assert!(db.is_ok());
     let db = db.unwrap();
     let air_elemental = db.get(&"Air Elemental".to_string());
@@ -467,11 +431,11 @@ fn load_test() {
     });
     assert!(match ashiok.extra {
         ExtraInfo::StartingLoyalty(ref val) => {
-            assert_eq!(val, 3);
+            assert_eq!(*val, 3);
             true
         },
         _ => false
     });
     assert_eq!(budoka.name.as_slice(), "Budoka Pupil");
-    assert_eq!(budoka.other_side.unwrap().as_slice(), "Ichiga, Who Topples Oaks");
+    assert!(!forest.mana.is_some());
 }
