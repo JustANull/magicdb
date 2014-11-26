@@ -16,8 +16,7 @@ pub struct Card {
     mana:  Option<Vec<Mana>>,
     color: Option<Vec<Color>>,
 
-    layout:           CardLayout,
-    other_side_names: Option<Vec<String>>,
+    layout: CardLayout,
 
     supertypes: Option<Vec<String>>,
     types:      Option<Vec<String>>,
@@ -32,7 +31,8 @@ pub struct Card {
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum CardLayout {
     SingleSided,
-    ManySided,
+    TwoSided(String),
+    ManySided(Vec<String>), // Exists purely for the benefit of Who // What // Where // When // Why
     Special
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
@@ -43,7 +43,7 @@ pub enum Color {
 pub enum ExtraInfo {
     None,
     PowerToughness(String, String),
-    StartingLoyalty(i64)
+    StartingLoyalty(u32)
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum Mana {
@@ -268,30 +268,16 @@ fn read_extra(js: &json::JsonObject) -> Result<ExtraInfo, CardError> {
         Some(power) => Ok(ExtraInfo::PowerToughness(power, try!(read_string(js, "toughness")))),
         None        => {
             match try!(read_optional!(read_integer, js, "loyalty")) {
-                Some(loyalty) => Ok(ExtraInfo::StartingLoyalty(loyalty)),
+                Some(loyalty) => Ok(ExtraInfo::StartingLoyalty(loyalty as u32)),
                 None          => Ok(ExtraInfo::None)
             }
         }
     }
 }
-fn read_layout(js: &json::JsonObject) -> Result<CardLayout, CardError> {
+fn read_layout(js: &json::JsonObject, card_name: &str) -> Result<CardLayout, CardError> {
     match try!(read_string(js, "layout")).as_slice() {
-        "normal" | "leveler"                                     => Ok(CardLayout::SingleSided),
-        "split" | "flip" | "double-faced"                        => Ok(CardLayout::ManySided),
-        "token" | "plane" | "scheme" | "phenomenon" | "vanguard" => Ok(CardLayout::Special),
-        _                                                        => Err(CardError::InvalidCardField("layout"))
-    }
-}
-fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
-    match try!(read_optional!(read_string, js, "manaCost")) {
-        Some(s) => Ok(Some(try!(read_mana_st(s.as_slice())))),
-        None    => Ok(None)
-    }
-}
-fn read_other_side_names(js: &json::JsonObject, layout: CardLayout, card_name: &str) -> Result<Option<Vec<String>>, CardError> {
-    match layout {
-        CardLayout::SingleSided | CardLayout::Special => Ok(None),
-        CardLayout::ManySided => {
+        "normal" | "leveler" => Ok(CardLayout::SingleSided),
+        "split" | "flip" | "double-faced" => {
             let names = try!(read_string_array(js, "names"));
             let names_len = names.len();
 
@@ -307,15 +293,28 @@ fn read_other_side_names(js: &json::JsonObject, layout: CardLayout, card_name: &
                 }
             }
 
-            if names_v.len() == names_len - 1 {
-                Ok(Some(names_v))
-            } else {
-                Err(CardError::InvalidCardField("names"))
+            if names_v.len() != names_len - 1 {
+                return Err(CardError::InvalidCardField("names"));
             }
-        }
+
+            if names_v.len() == 1 {
+                Ok(CardLayout::TwoSided(names_v.pop().unwrap()))
+            } else {
+                Ok(CardLayout::ManySided(names_v))
+            }
+        },
+        "token" | "plane" | "scheme" | "phenomenon" | "vanguard" => Ok(CardLayout::Special),
+        _ => Err(CardError::InvalidCardField("layout"))
+    }
+}
+fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
+    match try!(read_optional!(read_string, js, "manaCost")) {
+        Some(s) => Ok(Some(try!(read_mana_st(s.as_slice())))),
+        None    => Ok(None)
     }
 }
 
+// A "decorating try" that lets me not pass card_name into every single read_x function
 macro_rules! dec_try(
     ($name:expr, $e:expr) => (
         match $e {
@@ -330,8 +329,7 @@ fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, Build
     let mana  = dec_try!(card_name, read_mana(card_obj));
     let color = dec_try!(card_name, read_color(card_obj));
 
-    let layout           = dec_try!(card_name, read_layout(card_obj));
-    let other_side_names = dec_try!(card_name, read_other_side_names(card_obj, layout, name.as_slice()));
+    let layout = dec_try!(card_name, read_layout(card_obj, card_name));
 
     let supertypes = dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes"));
     let types      = dec_try!(card_name, read_optional!(read_string_array, card_obj, "types"));
@@ -348,8 +346,7 @@ fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, Build
         mana:  mana,
         color: color,
 
-        layout:     layout,
-        other_side_names: other_side_names,
+        layout: layout,
 
         supertypes: supertypes,
         types:      types,
