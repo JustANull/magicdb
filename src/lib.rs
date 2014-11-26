@@ -63,16 +63,16 @@ pub enum Mana {
 }
 
 #[deriving(Clone, PartialEq, Show)]
-pub enum CardError {
-    NoCardField(&'static str),
-    InvalidCardField(&'static str)
-}
-#[deriving(Clone, PartialEq, Show)]
 pub enum BuilderError {
     NoTopLevelObject,
     InvalidCardObject(String),
     Named(String, CardError),
     Json(json::BuilderError)
+}
+#[deriving(Clone, PartialEq, Show)]
+pub enum CardError {
+    NoCardField(&'static str),
+    InvalidCardField(&'static str)
 }
 
 fn read_integer(js: &json::JsonObject, field: &'static str) -> Result<i64, CardError> {
