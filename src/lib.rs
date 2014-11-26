@@ -462,7 +462,14 @@ fn load_test() {
             assert!(p.as_slice() == "4");
             assert!(t.as_slice() == "4");
             true
-        }
+        },
+        _ => false
+    });
+    assert!(match ashiok.extra {
+        ExtraInfo::StartingLoyalty(ref val) => {
+            assert_eq!(val, 3);
+            true
+        },
         _ => false
     });
     assert_eq!(budoka.name.as_slice(), "Budoka Pupil");
