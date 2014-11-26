@@ -8,20 +8,15 @@ extern crate serialize;
 use serialize::json;
 use std::collections;
 use std::io;
-use std::rc;
 
 #[deriving(Clone, PartialEq, Eq, Show)]
-pub enum Card {
-    Normal(rc::Rc<Box<CardInfo>>),
-    Split(rc::Rc<Box<CardInfo>>, rc::Rc<Box<CardInfo>>),
-    Flip(rc::Rc<Box<CardInfo>>, rc::Rc<Box<CardInfo>>),
-    DoubleFaced(rc::Rc<Box<CardInfo>>, rc::Rc<Box<CardInfo>>)
-}
-#[deriving(Clone, PartialEq, Eq, Show)]
-pub struct CardInfo {
+pub struct Card {
     name:  String,
     mana:  Option<Vec<Mana>>,
     color: Option<Vec<String>>,
+
+    layout:     CardLayout,
+    other_side: Option<String>,
 
     supertypes: Option<Vec<String>>,
     types:      Option<Vec<String>>,
@@ -32,6 +27,10 @@ pub struct CardInfo {
     flavor_text: Option<String>,
 
     extra: ExtraInfo
+}
+#[deriving(Clone, PartialEq, Eq, Show)]
+pub enum CardLayout {
+    Normal, Split, Flip, DoubleFaced
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum Color {
@@ -57,45 +56,58 @@ pub enum Mana {
 }
 
 #[deriving(Clone, PartialEq, Show)]
+pub enum CardError {
+    NoCardField(&'static str),
+    InvalidCardField(&'static str)
+}
+#[deriving(Clone, PartialEq, Show)]
 pub enum BuilderError {
     NoTopLevelObject,
     InvalidCardObject(String),
-    NoCardField(String, &'static str),
-    InvalidCardField(String, &'static str),
+    Named(String, CardError),
     Json(json::BuilderError)
 }
 
+macro_rules! dec_try(
+    ($name:expr, $e:expr) => (
+        match $e {
+            Ok(e)  => e,
+            Err(e) => return Err(BuilderError::Named($name.clone(), e))
+        }
+    );
+)
+
 macro_rules! read_optional(
-    ($f:expr, $js:expr, $field:expr, $card_name:expr) => (
-        match $f($js, $field, $card_name) {
-            Ok(val)     => Ok(Some(val)),
-            Err(reason) => match reason {
-                BuilderError::NoCardField(_, _) => Ok(None),
-                _                               => Err(reason)
+    ($f:expr, $js:expr, $field:expr) => (
+        match $f($js, $field) {
+            Ok(f)  => Ok(Some(f)),
+            Err(f) => match f {
+                CardError::NoCardField(_) => Ok(None),
+                _                            => Err(f)
             }
         }
     );
 )
 
-fn read_integer(js: &json::JsonObject, field: &'static str, card_name: &String) -> Result<i64, BuilderError> {
+fn read_integer(js: &json::JsonObject, field: &'static str) -> Result<i64, CardError> {
     match js.get(&field.to_string()) {
         Some(obj) => match obj.as_i64() {
             Some(i) => Ok(i),
-            None    => Err(BuilderError::InvalidCardField(card_name.clone(), field))
+            None    => Err(CardError::InvalidCardField(field))
         },
-        None => Err(BuilderError::NoCardField(card_name.clone(), field))
+        None => Err(CardError::NoCardField(field))
     }
 }
-fn read_string(js: &json::JsonObject, field: &'static str, card_name: &String) -> Result<String, BuilderError> {
+fn read_string(js: &json::JsonObject, field: &'static str) -> Result<String, CardError> {
     match js.get(&field.to_string()) {
         Some(obj) => match obj.as_string() {
             Some(s) => Ok(s.to_string()),
-            None    => Err(BuilderError::InvalidCardField(card_name.clone(), field))
+            None    => Err(CardError::InvalidCardField(field))
         },
-        None => Err(BuilderError::NoCardField(card_name.clone(), field))
+        None => Err(CardError::NoCardField(field))
     }
 }
-fn read_string_array(js: &json::JsonObject, field: &'static str, card_name: &String) -> Result<Vec<String>, BuilderError> {
+fn read_string_array(js: &json::JsonObject, field: &'static str) -> Result<Vec<String>, CardError> {
     match js.get(&field.to_string()) {
         Some(obj) => match obj.as_array() {
             Some(arr) => {
@@ -106,40 +118,29 @@ fn read_string_array(js: &json::JsonObject, field: &'static str, card_name: &Str
                         Some(s) => {
                             s_vec.push(s.to_string())
                         },
-                        None => return Err(BuilderError::InvalidCardField(card_name.clone(), field))
+                        None => return Err(CardError::InvalidCardField(field))
                     }
                 }
 
                 Ok(s_vec)
             },
-            None => Err(BuilderError::InvalidCardField(card_name.clone(), field))
+            None => Err(CardError::InvalidCardField(field))
         },
-        None => Err(BuilderError::NoCardField(card_name.clone(), field))
+        None => Err(CardError::NoCardField(field))
     }
 }
 
-fn read_color(c: char, card_name: &String) -> Result<Color, BuilderError> {
+fn read_color(c: char) -> Result<Color, CardError> {
     match c.to_uppercase() {
         'W' => Ok(Color::White),
         'U' => Ok(Color::Blue),
         'B' => Ok(Color::Black),
         'R' => Ok(Color::Red),
         'G' => Ok(Color::Green),
-        _   => Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+        _   => Err(CardError::InvalidCardField("manaCost"))
     }
 }
-fn read_extra(js: &json::JsonObject, card_name: &String) -> Result<ExtraInfo, BuilderError> {
-    match try!(read_optional!(read_string, js, "power", card_name)) {
-        Some(power) => Ok(ExtraInfo::PowerToughness(power, try!(read_string(js, "toughness", card_name)))),
-        None        => {
-            match try!(read_optional!(read_integer, js, "loyalty", card_name)) {
-                Some(loyalty) => Ok(ExtraInfo::StartingLoyalty(loyalty)),
-                None          => Ok(ExtraInfo::None)
-            }
-        }
-    }
-}
-fn read_mana(s: &String, card_name: &String) -> Result<Vec<Mana>, BuilderError> {
+fn read_mana(s: String) -> Result<Vec<Mana>, CardError> {
     let mut mana = Vec::new();
     let mut current = None;
     let mut is_half = false;
@@ -148,7 +149,7 @@ fn read_mana(s: &String, card_name: &String) -> Result<Vec<Mana>, BuilderError> 
     for c in s.chars() {
         match c.to_uppercase() {
             '{' if !is_half && !is_split => match current {
-                Some(_) => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost")),
+                Some(_) => return Err(CardError::InvalidCardField("manaCost")),
                 None    => {
                     current = Some(None)
                 }
@@ -158,22 +159,22 @@ fn read_mana(s: &String, card_name: &String) -> Result<Vec<Mana>, BuilderError> 
                     current = None;
                     mana.push(m);
                 },
-                _ => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost")),
+                _ => return Err(CardError::InvalidCardField("manaCost")),
             },
             'H' if !is_half && !is_split => match current {
                 Some(None) => {
                     is_half = true;
                 },
-                _ => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+                _ => return Err(CardError::InvalidCardField("manaCost"))
             },
             '/' if !is_half && !is_split => match current {
                 Some(Some(Mana::Colored(_))) | Some(Some(Mana::Colorless(_))) => {
                     is_split = true;
                 },
-                _ => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+                _ => return Err(CardError::InvalidCardField("manaCost"))
             },
             'W' | 'U' | 'B' | 'R' | 'G' => {
-                let col = try!(read_color(c, card_name));
+                let col = try!(read_color(c));
 
                 match current {
                     Some(Some(Mana::Colored(oth))) if is_split => {
@@ -191,7 +192,7 @@ fn read_mana(s: &String, card_name: &String) -> Result<Vec<Mana>, BuilderError> 
                     Some(None) if !is_half => {
                         current = Some(Some(Mana::Colored(col)));
                     }
-                    _ => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+                    _ => return Err(CardError::InvalidCardField("manaCost"))
                 }
             },
             num if num.is_digit(10) => {
@@ -204,39 +205,98 @@ fn read_mana(s: &String, card_name: &String) -> Result<Vec<Mana>, BuilderError> 
                     Some(None) => {
                         current = Some(Some(Mana::Colorless(num)))
                     }
-                    Some(Some(_)) | None => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+                    Some(Some(_)) | None => return Err(CardError::InvalidCardField("manaCost"))
                 }
             },
-            _ => return Err(BuilderError::InvalidCardField(card_name.clone(), "manaCost"))
+            _ => return Err(CardError::InvalidCardField("manaCost"))
         }
     }
 
     Ok(mana)
 }
 
-fn read_card(js: &json::Json, card_name: &String) -> Result<CardInfo, BuilderError> {
-    let card_obj = match js.as_object() {
-        Some(card_obj) => card_obj,
-        None           => return Err(BuilderError::InvalidCardObject(card_name.clone()))
+fn read_extra(js: &json::JsonObject) -> Result<ExtraInfo, CardError> {
+    match try!(read_optional!(read_string, js, "power")) {
+        Some(power) => Ok(ExtraInfo::PowerToughness(power, try!(read_string(js, "toughness")))),
+        None        => {
+            match try!(read_optional!(read_integer, js, "loyalty")) {
+                Some(loyalty) => Ok(ExtraInfo::StartingLoyalty(loyalty)),
+                None          => Ok(ExtraInfo::None)
+            }
+        }
+    }
+}
+fn read_layout(js: &json::JsonObject) -> Result<CardLayout, CardError> {
+    match try!(read_string(js, "layout")).as_slice() {
+        "normal"       => Ok(CardLayout::Normal),
+        "split"        => Ok(CardLayout::Split),
+        "flip"         => Ok(CardLayout::Flip),
+        "double-faced" => Ok(CardLayout::DoubleFaced),
+        _              => Err(CardError::InvalidCardField("layout"))
+    }
+}
+fn read_other_side(js: &json::JsonObject, layout: CardLayout, card_name: &String) -> Result<Option<String>, CardError> {
+    match layout {
+        CardLayout::Normal => Ok(None),
+        CardLayout::Split | CardLayout::Flip | CardLayout::DoubleFaced => {
+            let mut names = try!(read_string_array(js, "names"));
+
+            if names.len() != 2 {
+                return Err(CardError::InvalidCardField("names"));
+            }
+
+            let name_2 = names.pop().unwrap();
+            let name_1 = names.pop().unwrap();
+
+            if name_1 == *card_name {
+                Ok(Some(name_2))
+            } else if name_2 == *card_name {
+                Ok(Some(name_1))
+            } else {
+                Err(CardError::InvalidCardField("names"))
+            }
+        }
+    }
+}
+
+fn read_card(card_obj: &json::JsonObject, card_name: &String) -> Result<Card, BuilderError> {
+    let name = dec_try!(card_name, read_string(card_obj, "name"));
+    let mana = match dec_try!(card_name, read_optional!(read_string, card_obj, "manaCost")) {
+        Some(m) => Some(dec_try!(card_name, read_mana(m))),
+        None    => None
     };
+    let color = dec_try!(card_name, read_optional!(read_string_array, card_obj, "colors"));
 
-    Ok(CardInfo {
-        name: try!(read_string(card_obj, "name", card_name)),
-        mana: match try!(read_optional!(read_string, card_obj, "manaCost", card_name)) {
-            Some(m) => Some(try!(read_mana(&m, card_name))),
-            None    => None
-        },
-        color: try!(read_optional!(read_string_array, card_obj, "colors", card_name)),
+    let layout     = dec_try!(card_name, read_layout(card_obj));
+    let other_side = dec_try!(card_name, read_other_side(card_obj, layout, &name));
 
-        supertypes: try!(read_optional!(read_string_array, card_obj, "supertypes", card_name)),
-        types: try!(read_optional!(read_string_array, card_obj, "types", card_name)),
-        subtypes: try!(read_optional!(read_string_array, card_obj, "subtypes", card_name)),
+    let supertypes = dec_try!(card_name, read_optional!(read_string_array, card_obj, "supertypes"));
+    let types      = dec_try!(card_name, read_optional!(read_string_array, card_obj, "types"));
+    let subtypes   = dec_try!(card_name, read_optional!(read_string_array, card_obj, "subtypes"));
 
-        image_name: try!(read_string(card_obj, "imageName", card_name)),
-        text: try!(read_optional!(read_string, card_obj, "text", card_name)),
-        flavor_text: try!(read_optional!(read_string, card_obj, "flavorText", card_name)),
+    let image_name  = dec_try!(card_name, read_string(card_obj, "imageName"));
+    let text        = dec_try!(card_name, read_optional!(read_string, card_obj, "text"));
+    let flavor_text = dec_try!(card_name, read_optional!(read_string, card_obj, "flavorText"));
 
-        extra: try!(read_extra(card_obj, card_name))
+    let extra = dec_try!(card_name, read_extra(card_obj));
+
+    Ok(Card {
+        name:  name,
+        mana:  mana,
+        color: color,
+
+        layout:     layout,
+        other_side: other_side,
+
+        supertypes: supertypes,
+        types:      types,
+        subtypes:   subtypes,
+
+        image_name:  image_name,
+        text:        text,
+        flavor_text: flavor_text,
+
+        extra: extra
     })
 }
 
@@ -246,49 +306,13 @@ pub fn from_json(js: &json::Json) -> Result<collections::HashMap<String, Card>, 
         None               => return Err(BuilderError::NoTopLevelObject)
     };
 
-    let mut name_to_cardinfo = collections::HashMap::new();
-
-    for (k, v) in name_to_json.iter() {
-        name_to_cardinfo.insert(k.clone(), try!(read_card(v, k)));
-    }
-
-    let name_to_cardinfo = name_to_cardinfo;
     let mut name_to_card = collections::HashMap::new();
 
-    for (k, v) in name_to_cardinfo.iter() {
-        let layout = try!(read_string(name_to_json.get(k).unwrap().as_object().unwrap(), "layout", k));
-
-        match layout.as_slice() {
-            "normal" => {
-                name_to_card.insert(k.clone(), Card::Normal(rc::Rc::new(box v.clone())));
-            },
-            "split" | "flip" | "double-faced" => {
-                if !name_to_card.contains_key(k) {
-                    let names = try!(read_string_array(name_to_json.get(k).unwrap().as_object().unwrap(), "names", k));
-
-                    if names.len() != 2 {
-                        return Err(BuilderError::InvalidCardField(k.clone(), "names"));
-                    }
-
-                    let card_a = rc::Rc::new(box name_to_cardinfo.get(&names[0]).unwrap().clone());
-                    let card_b = rc::Rc::new(box name_to_cardinfo.get(&names[1]).unwrap().clone());
-
-                    let (card_a, card_b) = match layout.as_slice() {
-                        "split"        => (Card::Split(card_a.clone(), card_b.clone()),
-                                           Card::Split(card_b, card_a)),
-                        "flip"         => (Card::Flip(card_a.clone(), card_b.clone()),
-                                           Card::Flip(card_b, card_a)),
-                        "double-faced" => (Card::DoubleFaced(card_a.clone(), card_b.clone()),
-                                           Card::DoubleFaced(card_b, card_a)),
-                        _ => panic!("This should never happen")
-                    };
-
-                    name_to_card.insert(names[0].clone(), card_a);
-                    name_to_card.insert(names[1].clone(), card_b);
-                }
-            },
-            _ => return Err(BuilderError::InvalidCardField(k.clone(), "layout"))
-        }
+    for (k, v) in name_to_json.iter() {
+        name_to_card.insert(k.clone(), try!(read_card(match v.as_object() {
+            Some(card_obj) => card_obj,
+            None           => return Err(BuilderError::InvalidCardObject(k.clone()))
+	    }, k)));
     }
 
     Ok(name_to_card)
@@ -392,28 +416,16 @@ fn load_test() {
     let budoka = budoka.unwrap().clone();
     let ashiok = ashiok.unwrap().clone();
     let forest = forest.unwrap().clone();
-    assert!(match air_elemental {
-        Card::Normal(air_elemental) => {
-            assert_eq!(air_elemental.name.as_slice(), "Air Elemental");
-            assert_eq!(air_elemental.mana.clone().unwrap(), vec![Mana::Colorless(3), Mana::Colored(Color::Blue), Mana::Colored(Color::Blue)]);
-            assert!(match air_elemental.extra {
-                ExtraInfo::PowerToughness(ref p, ref t) => {
-                    assert!(p.as_slice() == "4");
-                    assert!(t.as_slice() == "4");
-                    true
-                }
-                _ => false
-            })
-                true
-        },
-        _ => false
-    });
-    assert!(match budoka {
-        Card::Flip(budoka, ichiga) => {
-            assert_eq!(budoka.name.as_slice(), "Budoka Pupil");
-            assert_eq!(ichiga.name.as_slice(), "Ichiga, Who Topples Oaks");
+    assert_eq!(air_elemental.name.as_slice(), "Air Elemental");
+    assert_eq!(air_elemental.mana.clone().unwrap(), vec![Mana::Colorless(3), Mana::Colored(Color::Blue), Mana::Colored(Color::Blue)]);
+    assert!(match air_elemental.extra {
+        ExtraInfo::PowerToughness(ref p, ref t) => {
+            assert!(p.as_slice() == "4");
+            assert!(t.as_slice() == "4");
             true
-        },
+        }
         _ => false
     });
+    assert_eq!(budoka.name.as_slice(), "Budoka Pupil");
+    assert_eq!(budoka.other_side.unwrap().as_slice(), "Ichiga, Who Topples Oaks");
 }
