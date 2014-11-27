@@ -28,12 +28,73 @@ pub struct Card {
 
     extra: ExtraInfo
 }
+impl Card {
+    pub fn name(&self) -> &str {
+        self.name.as_slice()
+    }
+    pub fn mana(&self) -> Option<&[Mana]> {
+        match self.mana.as_ref() {
+            Some(m) => Some(m.as_slice()),
+            None    => None
+        }
+    }
+    pub fn color(&self) -> Option<&[Color]> {
+        match self.color.as_ref() {
+            Some(c) => Some(c.as_slice()),
+            None    => None
+        }
+    }
+
+    pub fn layout(&self) -> &CardLayout {
+        &self.layout
+    }
+
+    pub fn supertypes(&self) -> Option<&[String]> {
+        match self.supertypes.as_ref() {
+            Some(s) => Some(s.as_slice()),
+            None    => None
+        }
+    }
+    pub fn types(&self) -> Option<&[String]> {
+        match self.types.as_ref() {
+            Some(s) => Some(s.as_slice()),
+            None    => None
+        }
+    }
+    pub fn subtypes(&self) -> Option<&[String]> {
+        match self.subtypes.as_ref() {
+            Some(s) => Some(s.as_slice()),
+            None    => None
+        }
+    }
+
+    pub fn image_name(&self) -> &str {
+        self.image_name.as_slice()
+    }
+    pub fn text(&self) -> Option<&str> {
+        match self.text.as_ref() {
+            Some(t) => Some(t.as_slice()),
+            None    => None
+        }
+    }
+    pub fn flavor_text(&self) -> Option<&str> {
+        match self.flavor_text.as_ref() {
+            Some(t) => Some(t.as_slice()),
+            None    => None
+        }
+    }
+
+    pub fn extra(&self) -> &ExtraInfo {
+        &self.extra
+    }
+}
+
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum CardLayout {
     SingleSided,
     TwoSided(String),
     ManySided(Vec<String>), // Exists purely for the benefit of Who // What // Where // When // Why
-    Special
+    Token, Plane, Scheme, Phenomenon, Vanguard
 }
 #[deriving(Clone, PartialEq, Eq, Show)]
 pub enum Color {
@@ -51,7 +112,7 @@ pub enum Mana {
     // An amount of colorless
     Colorless(u32),
     // Any amount of colorless with an identifier for which arbitrary amount was paid, needed for The Ultimate Nightmare of Programming
-    Arbitrary(u32),
+    Arbitrary(char),
     // e.g. payable by red or green (Manamorphose)
     Hybrid(Color, Color),
     // e.g. payable by 2 colorless or white (Spectral Procession)
@@ -210,7 +271,7 @@ fn read_mana_st(s: &str) -> Result<Vec<Mana>, CardError> {
             },
             'X' | 'Y' | 'Z' if !is_half && !is_split => match current {
                 Some(None) => {
-                    current = Some(Some(Mana::Arbitrary(c.to_uppercase() as u32 - 'X' as u32)));
+                    current = Some(Some(Mana::Arbitrary(c.to_uppercase())));
                 },
                 _ => return Err(CardError::InvalidCardField("manaCost"))
             },
@@ -240,7 +301,7 @@ macro_rules! read_optional(
             Ok(f)  => Ok(Some(f)),
             Err(f) => match f {
                 CardError::NoCardField(_) => Ok(None),
-                _                            => Err(f)
+                _                         => Err(f)
             }
         }
     );
@@ -303,8 +364,12 @@ fn read_layout(js: &json::JsonObject, card_name: &str) -> Result<CardLayout, Car
                 Ok(CardLayout::ManySided(names_v))
             }
         },
-        "token" | "plane" | "scheme" | "phenomenon" | "vanguard" => Ok(CardLayout::Special),
-        _ => Err(CardError::InvalidCardField("layout"))
+        "token"      => Ok(CardLayout::Token),
+        "plane"      => Ok(CardLayout::Plane),
+        "scheme"     => Ok(CardLayout::Scheme),
+        "phenomenon" => Ok(CardLayout::Phenomenon),
+        "vanguard"   => Ok(CardLayout::Vanguard),
+        _            => Err(CardError::InvalidCardField("layout"))
     }
 }
 fn read_mana(js: &json::JsonObject) -> Result<Option<Vec<Mana>>, CardError> {
@@ -377,7 +442,7 @@ pub fn from_str(s: &str) -> Result<collections::HashMap<String, Card>, BuilderEr
 #[test]
 fn load_test() {
     let db = from_reader(&mut io::BufferedReader::new(match io::File::open(&Path::new("./AllCards.json")) {
-        Ok(f) => f,
+        Ok(f)  => f,
         Err(e) => {
             println!("{}", e);
             panic!(e);
