@@ -23,6 +23,7 @@ pub struct Card {
     subtypes:   Option<Vec<String>>,
 
     image_name:  String,
+    typeline:    Option<String>,
     text:        Option<String>,
     flavor_text: Option<String>,
 
@@ -33,16 +34,10 @@ impl Card {
         self.name.as_slice()
     }
     pub fn mana(&self) -> Option<&[Mana]> {
-        match self.mana.as_ref() {
-            Some(m) => Some(m.as_slice()),
-            None    => None
-        }
+        self.mana.as_ref().map_or(None, |m| Some(m.as_slice()))
     }
     pub fn color(&self) -> Option<&[Color]> {
-        match self.color.as_ref() {
-            Some(c) => Some(c.as_slice()),
-            None    => None
-        }
+        self.color.as_ref().map_or(None, |c| Some(c.as_slice()))
     }
 
     pub fn layout(&self) -> &CardLayout {
@@ -62,17 +57,14 @@ impl Card {
     pub fn image_name(&self) -> &str {
         self.image_name.as_slice()
     }
+    pub fn typeline(&self) -> Option<&str> {
+        self.typeline.as_ref().map_or(None, |t| Some(t.as_slice()))
+    }
     pub fn text(&self) -> Option<&str> {
-        match self.text.as_ref() {
-            Some(t) => Some(t.as_slice()),
-            None    => None
-        }
+        self.text.as_ref().map_or(None, |t| Some(t.as_slice()))
     }
     pub fn flavor_text(&self) -> Option<&str> {
-        match self.flavor_text.as_ref() {
-            Some(t) => Some(t.as_slice()),
-            None    => None
-        }
+        self.flavor_text.as_ref().map_or(None, |t| Some(t.as_slice()))
     }
 
     pub fn power(&self) -> Option<&str> {
@@ -445,6 +437,7 @@ fn read_card(card_obj: &json::JsonObject, card_name: &str) -> Result<Card, Build
         subtypes:   dec_try!(card_name, read_optional!(read_string_array, card_obj, "subtypes")),
 
         image_name:  dec_try!(card_name, read_string(card_obj, "imageName")),
+        typeline:    dec_try!(card_name, read_optional!(read_string, card_obj, "type")),
         text:        dec_try!(card_name, read_optional!(read_string, card_obj, "text")),
         flavor_text: dec_try!(card_name, read_optional!(read_string, card_obj, "flavorText")),
 
