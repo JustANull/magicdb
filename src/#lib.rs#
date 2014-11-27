@@ -33,16 +33,10 @@ impl Card {
         self.name.as_slice()
     }
     pub fn mana(&self) -> Option<&[Mana]> {
-        match self.mana.as_ref() {
-            Some(m) => Some(m.as_slice()),
-            None    => None
-        }
+        self.mana.as_ref().map_or(None, |m| Some(m.as_slice()))
     }
     pub fn color(&self) -> Option<&[Color]> {
-        match self.color.as_ref() {
-            Some(c) => Some(c.as_slice()),
-            None    => None
-        }
+        self.color.as_ref().map_or(None, |c| Some(c.as_slice()))
     }
 
     pub fn layout(&self) -> &CardLayout {
@@ -63,16 +57,10 @@ impl Card {
         self.image_name.as_slice()
     }
     pub fn text(&self) -> Option<&str> {
-        match self.text.as_ref() {
-            Some(t) => Some(t.as_slice()),
-            None    => None
-        }
+        self.text.as_ref().map_or(None, |t| Some(t.as_slice()))
     }
     pub fn flavor_text(&self) -> Option<&str> {
-        match self.flavor_text.as_ref() {
-            Some(t) => Some(t.as_slice()),
-            None    => None
-        }
+        self.flavor_text.as_ref().map_or(None, |t| Some(t.as_slice()))
     }
 
     pub fn power(&self) -> Option<&str> {
